@@ -126,19 +126,19 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     model = Model(SDPNAL.Optimizer)
     # set_optimizer_attribute(model, "warm_start", true)
     @variables(model, begin
-        z[1:n, 1:n], PSD
+        z[1:n, 1:n] >= 0, PSD
     end)
     @objective(
         model,
         Min,
-        -(K / n) * 1e-3 * sum(data.costs[i, j] * z[i, j] for i in 1:n, j in 1:n)
+        -(K / n) * sum(data.costs[i, j] * z[i, j] for i in 1:n, j in 1:n)
     )
     @constraints(model, begin
         c1, sum(z[i, i] for i in 1:n) == n
         c2[i = 1:n], sum(z[i, j] for j in 1:n) == (n / K)
         # c3[i = 1:n, j = 1:n; i != j], z[i, i] >= z[i, j]
         c6[i = 1:n], z[i, i] >= (K / (n - K + 1))
-        c7[i = 1:n, j = 1:n; i != j], z[i, j] >= 0
+        # c7[i = 1:n, j = 1:n; i != j], z[i, j] >= 0
     end)
 
     # loop adding triangle cuts
@@ -165,7 +165,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         @show nb_infeas
         @show max_infeas
-        # break
+        break
 
         separate_triangle_cuts!(n, z_, triangle_cuts)
         resize!(triangle_cuts, min(100 * n, length(triangle_cuts)))
@@ -181,8 +181,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     for i in 1:n, j in 1:n
         z_[i, j] = value(z[i, j])
     end
-    @show data.fixed_cost + 1e3 * objective_value(model)
-    return compute_and_check_solution(data, 1e3 * z_, data.fixed_cost + 1e3 * objective_value(model))
+    @show data.fixed_cost + objective_value(model)
+    return compute_and_check_solution(data, z_, data.fixed_cost + objective_value(model))
 
     # identify the active cuts
     active_pivot_cuts = Vector{PivotCut}()
