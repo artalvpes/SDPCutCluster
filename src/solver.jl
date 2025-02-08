@@ -118,6 +118,7 @@ end
 
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     println("Solving $(length(data.points)) points in $(Dim) dimensions")
+    mat"maxNumCompThreads(1)"
 
     # Set the constants
     n = length(data.points)

@@ -1,6 +1,6 @@
 module SDPCutCluster
 
-using JuMP, CPLEX, MathOptInterface, SDPNAL, LinearAlgebra
+using JuMP, CPLEX, MathOptInterface, SDPNAL, LinearAlgebra, MATLAB
 
 include("data.jl")
 include("solver.jl")
