@@ -21,10 +21,7 @@ function main(args::Vector{String})
         ignore = parse(Int, args[4])
     end
     data = Data{dim}("$filename", ignore)
-    start_time = time_ns()
     cputime = @elapsed sol = solve(data, num_clusters)
-    runtime = (time_ns() - start_time) / 1e9
-    @show runtime
     @show cputime
     println("Cost: $(sol.cost)")
     println("Clusters: $(sol.clusters)")
