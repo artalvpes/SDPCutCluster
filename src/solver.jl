@@ -124,7 +124,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     n = length(data.points)
 
     # Build the MIP model
-    model = Model(SDPNAL.Optimizer)
+    model = Model(SDPSolver.Optimizer)
     # set_optimizer_attribute(model, "warm_start", true)
     @variables(model, begin
         z[1:n, 1:n] >= 0, PSD
