@@ -5,22 +5,24 @@ struct Data{DIM}
     costs::Matrix{Float64}
 end
 
-default_zero(val::Union{Float64, Nothing}) = isnothing(val) ? 0.0 : val
-
-function Data{DIM}(filename::String, ignore::Int) where {DIM}
+function read_data(filename::String)::Data
     fixed_cost = 0.0
-    points = Vector{NTuple{DIM, Float64}}()
+    dim = 0
+    coords = Vector{Vector{Float64}}()
     open(filename) do file
+        nb_points = 0
         for line in eachline(file)
-            if isempty(line) || !(line[1] in '0':'9') && line[1] != '-'
-                continue
+            if dim == 0
+                head = parse.(Int, split(line))
+                nb_points, dim = head[1], head[2]
+            else
+                push!(coords, map(x -> parse(Float64, x), split(line)))
             end
-            coords = map(x -> default_zero(tryparse(Float64, x)), split(line, ','))[(ignore+1):end]
-            push!(points, ntuple(x -> coords[x], DIM))
         end
     end
+    points = [ntuple(x -> p[x], dim) for p in coords]
     dists = [sum((pi .- pj) .^ 2) for pi in points, pj in points]
     costs = [sum((pi .* pj)) for pi in points, pj in points]
     fixed_cost = sum([costs[i, i] for i in 1:length(points)])
-    return Data{DIM}(fixed_cost, points, dists, costs)
+    return Data{dim}(fixed_cost, points, dists, costs)
 end
