@@ -125,9 +125,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
     # Build the MIP model
     model = Model(SDPSolver.Optimizer)
-    # set_optimizer_attribute(model, "warm_start", true)
     @variables(model, begin
-        z[1:n, 1:n] >= 0, PSD
+        z[i = 1:n, j = 1:n] >= ((i == j) ? (K / (n - K + 1)) : 0.0), PSD
     end)
     @objective(
         model,
@@ -138,7 +137,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         c1, sum(z[i, i] for i in 1:n) == n
         c2[i = 1:n], sum(z[i, j] for j in 1:n) == (n / K)
         # c3[i = 1:n, j = 1:n; i != j], z[i, i] >= z[i, j]
-        c6[i = 1:n], z[i, i] >= (K / (n - K + 1))
+        # c6[i = 1:n], z[i, i] >= (K / (n - K + 1))
         # c7[i = 1:n, j = 1:n; i != j], z[i, j] >= 0
     end)
 
