@@ -127,6 +127,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
     # Build the MIP model
     model = Model(SDPSolver.Optimizer)
+    set_optimizer_attribute(model, QuietParam, QuietValue)
     @variables(model, begin
         z[i = 1:n, j = 1:n] >= ((i == j) ? (K / (n - K + 1)) : 0.0), PSD
     end)
@@ -157,6 +158,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     end
     added_cuts = Vector{ConstraintRef}()
     should_keep = Vector{Bool}()
+    cut_round = 0
     while true
         optimize!(model)
         obj = objective_value(model)
@@ -181,9 +183,6 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         optimize!(model)
         new_obj = objective_value(model)
-        if abs(obj - objective_value(model)) > 1e-6 * max(obj, new_obj)
-            println("WARNING: objective value changed from $obj to $new_obj")
-        end
         nb_infeas = 0
         max_infeas = 0.0
         for i in 1:n, j in i:n
@@ -201,6 +200,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             z_target = copy(z_)
         end
 
+        cut_round += 1
         nb_cuts = 0
         first = true
         while first || (alpha > 0.0 && nb_cuts == 0)
@@ -248,7 +248,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         resize!(should_keep, length(added_cuts))
 
-        @show new_obj, nb_cuts, remain_cuts, alpha
+        diff = round(obj - new_obj, digits = 5)
+        new_obj = data.fixed_cost + new_obj
+        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha
         if nb_cuts == 0
             break
         end

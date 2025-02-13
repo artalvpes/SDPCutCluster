@@ -20,6 +20,8 @@ function read_data(filename::String)::Data
             end
         end
     end
+    centroid = [sum(coords[i][j] for i in 1:length(coords)) / length(coords) for j in 1:dim]
+    coords = [coords[i] .- centroid for i in 1:length(coords)]
     points = [ntuple(x -> p[x], dim) for p in coords]
     dists = [sum((pi .- pj) .^ 2) for pi in points, pj in points]
     costs = [sum((pi .* pj)) for pi in points, pj in points]

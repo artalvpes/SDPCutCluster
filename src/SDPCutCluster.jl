@@ -1,8 +1,16 @@
 module SDPCutCluster
 
-using JuMP, CPLEX, MathOptInterface, SDPNAL, LinearAlgebra, MATLAB
+using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB
 
+# using SCS
+# const SDPSolver = SCS
+# const QuietParam = "verbose"
+# const QuietValue = false
+using SDPNAL
 const SDPSolver = SDPNAL
+const QuietParam = "printlevel"
+const QuietValue = 0
+
 
 include("data.jl")
 include("solver.jl")
