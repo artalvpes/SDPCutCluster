@@ -4,14 +4,10 @@ using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB
 
 # using SCS
 # const SDPSolver = SCS
-# const QuietParam = "verbose"
-# const QuietValue = false
-# const ToleranceParam = "eps_rel"
+# const SDPSolverName = "SCS"
 using SDPNAL
 const SDPSolver = SDPNAL
-const QuietParam = "printlevel"
-const QuietValue = 0
-const ToleranceParam = "tol"
+const SDPSolverName = "SDPNAL"
 
 
 include("data.jl")

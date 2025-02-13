@@ -140,7 +140,12 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
     # Build the MIP model
     model = Model(SDPSolver.Optimizer)
-    set_optimizer_attribute(model, QuietParam, QuietValue)
+    if SDPSolverName == "SDPNAL"
+        set_optimizer_attribute(model, "printlevel", 0)
+        set_optimizer_attribute(model, "stopoption", 0)
+    else
+        set_optimizer_attribute(model, "verbose", false)
+    end
     @variables(model, begin
         z[i = 1:n, j = 1:n] >= ((i == j) ? (K / (n - K + 1)) : 0.0), PSD
     end)
@@ -177,7 +182,11 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     min_viol = sqrt(curr_tol)
     while true
         # solve the SDP relaxation
-        set_optimizer_attribute(model, ToleranceParam, curr_tol)
+        if SDPSolverName == "SDPNAL"
+            set_optimizer_attribute(model, "tol", curr_tol)
+        else
+            set_optimizer_attribute(model, "eps_rel", curr_tol)
+        end
         sdp_time = @elapsed optimize!(model)
         new_obj = data.fixed_cost + objective_value(model)
         remain_cuts = length(added_cuts)
