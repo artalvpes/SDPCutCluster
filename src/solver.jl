@@ -3,9 +3,12 @@ struct Solution
     clusters::Vector{Vector{Int}}
 end
 
-const min_viol = 1e-3
+const target_tol = 1e-6
+const tol_step = 0.1
 const max_nb_cuts = 5000
 const target_nb_cuts = 1000
+
+tol_is_ok(tol::Float64)::Bool = abs(tol - target_tol) < 1e-6 * target_tol
 
 struct TriangleCut
     i::Int
@@ -14,7 +17,12 @@ struct TriangleCut
     viol::Float64
 end
 
-function separate_triangle_cuts!(n::Int, z_::Matrix{Float64}, cuts::Vector{TriangleCut})::Vector{TriangleCut}
+function separate_triangle_cuts!(
+    n::Int,
+    z_::Matrix{Float64},
+    cuts::Vector{TriangleCut},
+    min_viol::Float64,
+)::Vector{TriangleCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
     for i in 1:n
@@ -46,7 +54,12 @@ struct PivotCut
     viol::Float64
 end
 
-function separate_pivot_cuts!(n::Int, z_::Matrix{Float64}, cuts::Vector{PivotCut})::Vector{PivotCut}
+function separate_pivot_cuts!(
+    n::Int,
+    z_::Matrix{Float64},
+    cuts::Vector{PivotCut},
+    min_viol::Float64,
+)::Vector{PivotCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
     for i in 1:n
@@ -160,8 +173,11 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     should_keep = Vector{Bool}()
     cut_round = 0
     obj = 0.0
+    curr_tol = 1e-2
+    min_viol = sqrt(curr_tol)
     while true
         # solve the SDP relaxation
+        set_optimizer_attribute(model, ToleranceParam, curr_tol)
         sdp_time = @elapsed optimize!(model)
         new_obj = data.fixed_cost + objective_value(model)
         remain_cuts = length(added_cuts)
@@ -209,7 +225,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         while first || (alpha > 0.0 && nb_cuts == 0)
             update_z_aux()
             nb_cuts = 0
-            separate_pivot_cuts!(n, z_aux, pivot_cuts)
+            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
             resize!(pivot_cuts, min(max_nb_cuts, length(pivot_cuts)))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
@@ -221,7 +237,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                     break
                 end
             end
-            separate_triangle_cuts!(n, z_aux, triangle_cuts)
+            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol)
             resize!(triangle_cuts, min(max_nb_cuts, length(triangle_cuts)))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
@@ -253,9 +269,13 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
-        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, sdp_time
-        if nb_cuts == 0
-            break
+        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
+        if nb_cuts == 0 || diff < 1e-6 * new_obj
+            if tol_is_ok(curr_tol)
+                break
+            end
+            curr_tol *= tol_step
+            min_viol = sqrt(curr_tol)
         end
     end
 

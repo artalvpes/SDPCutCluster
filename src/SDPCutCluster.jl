@@ -6,10 +6,12 @@ using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB
 # const SDPSolver = SCS
 # const QuietParam = "verbose"
 # const QuietValue = false
+# const ToleranceParam = "eps_rel"
 using SDPNAL
 const SDPSolver = SDPNAL
 const QuietParam = "printlevel"
 const QuietValue = 0
+const ToleranceParam = "tol"
 
 
 include("data.jl")
