@@ -167,8 +167,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         remain_cuts = length(added_cuts)
         for c in 1:remain_cuts
             # should_keep[c] = get_attribute(added_cuts[c], MOI.ConstraintBasisStatus()) == MOI.BASIC
-            should_keep[c] = abs(value(added_cuts[c])) < min_viol
-            # should_keep[c] = abs(dual(added_cuts[c])) > 1e-6
+            # should_keep[c] = abs(value(added_cuts[c])) < min_viol
+            should_keep[c] = abs(dual(added_cuts[c])) > 1e-6 * new_obj
             # should_keep[c] = true
         end
         nb_infeas = 0
