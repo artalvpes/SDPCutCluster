@@ -159,9 +159,11 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     added_cuts = Vector{ConstraintRef}()
     should_keep = Vector{Bool}()
     cut_round = 0
+    obj = 0.0
     while true
-        optimize!(model)
-        obj = objective_value(model)
+        # solve the SDP relaxation
+        sdp_time = @elapsed optimize!(model)
+        new_obj = data.fixed_cost + objective_value(model)
         remain_cuts = length(added_cuts)
         for c in 1:remain_cuts
             # should_keep[c] = get_attribute(added_cuts[c], MOI.ConstraintBasisStatus()) == MOI.BASIC
@@ -169,20 +171,6 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             # should_keep[c] = abs(dual(added_cuts[c])) > 1e-6
             # should_keep[c] = true
         end
-        c = 1
-        while c <= remain_cuts
-            if !should_keep[c]
-                JuMP.delete(model, added_cuts[c])
-                added_cuts[c], added_cuts[end] = added_cuts[end], added_cuts[c]
-                pop!(added_cuts)
-                should_keep[c], should_keep[end] = should_keep[end], should_keep[c]
-                pop!(should_keep)
-                remain_cuts -= 1
-            end
-            c += 1
-        end
-        optimize!(model)
-        new_obj = objective_value(model)
         nb_infeas = 0
         max_infeas = 0.0
         for i in 1:n, j in i:n
@@ -200,6 +188,21 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             z_target = copy(z_)
         end
 
+        # remove cuts that are not needed
+        c = 1
+        while c <= remain_cuts
+            if !should_keep[c]
+                JuMP.delete(model, added_cuts[c])
+                added_cuts[c], added_cuts[end] = added_cuts[end], added_cuts[c]
+                pop!(added_cuts)
+                should_keep[c], should_keep[end] = should_keep[end], should_keep[c]
+                pop!(should_keep)
+                remain_cuts -= 1
+            end
+            c += 1
+        end
+
+        # add new cuts
         cut_round += 1
         nb_cuts = 0
         first = true
@@ -248,9 +251,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         resize!(should_keep, length(added_cuts))
 
-        diff = round(obj - new_obj, digits = 5)
-        new_obj = data.fixed_cost + new_obj
-        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha
+        diff = round(new_obj - obj, digits = 5)
+        obj = new_obj
+        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, sdp_time
         if nb_cuts == 0
             break
         end
@@ -260,5 +263,5 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     # println("z_ = $z_")
     # @show objective_value(model)
     # @show -(K / n) * 1e-3 * sum(data.costs[i, j] * z_[i, j] for i in 1:n, j in 1:n)
-    return compute_and_check_solution(data, z_, data.fixed_cost + objective_value(model))
+    return compute_and_check_solution(data, z_, obj)
 end
