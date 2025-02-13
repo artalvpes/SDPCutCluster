@@ -180,6 +180,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     obj = 0.0
     curr_tol = 1e-2
     min_viol = sqrt(curr_tol)
+    tol_was_decreased = false
     while true
         # solve the SDP relaxation
         if SDPSolverName == "SDPNAL"
@@ -279,12 +280,15 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
         @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
-        if nb_cuts == 0 || diff < 1e-6 * new_obj
+        if (nb_cuts == 0 || diff < 1e-6 * new_obj) && !tol_was_decreased
             if tol_is_ok(curr_tol)
                 break
             end
             curr_tol *= tol_step
             min_viol = sqrt(curr_tol)
+            tol_was_decreased = true
+        else
+            tol_was_decreased = false
         end
     end
 
