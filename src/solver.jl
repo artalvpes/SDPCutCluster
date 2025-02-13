@@ -4,7 +4,7 @@ struct Solution
 end
 
 const target_tol = 1e-6
-const tol_step = 0.1
+const tol_step = 0.5
 const max_nb_cuts = 5000
 const target_nb_cuts = 1000
 
@@ -280,11 +280,11 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
         @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
-        if (nb_cuts == 0 || diff < 1e-6 * new_obj) && !tol_was_decreased
+        if nb_cuts == 0 || (diff < 1e-6 * new_obj && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
             end
-            curr_tol *= tol_step
+            curr_tol = max(curr_tol * tol_step, target_tol)
             min_viol = sqrt(curr_tol)
             tol_was_decreased = true
         else
