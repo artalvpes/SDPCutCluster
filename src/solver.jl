@@ -79,6 +79,38 @@ function separate_pivot_cuts!(
     return cuts
 end
 
+function assign_to_clusters(
+    data::Data{Dim},
+    centroids::Vector{NTuple{Dim, Float64}},
+    points_to_cluster::Vector{Int},
+    cluster_sizes::Vector{Int},
+)::Nothing where {Dim}
+    n = length(data.points)
+    K = length(cluster_sizes)
+    resize!(centroids, 2 * K)
+    for k in 1:K
+        centroids[K+k] = ntuple(_ -> 0.0, Dim)
+    end
+    fill!(cluster_sizes, 0)
+    for i in 1:n
+        min_dist = Inf
+        for k in 1:K
+            dist = sum((data.points[i] .- centroids[k]) .^ 2)
+            if dist < min_dist
+                min_dist = dist
+                points_to_cluster[i] = k
+            end
+        end
+        centroids[K+points_to_cluster[i]] = centroids[K+points_to_cluster[i]] .+ data.points[i]
+        cluster_sizes[points_to_cluster[i]] += 1
+    end
+    for k in 1:K
+        centroids[k] = centroids[K+k] ./ cluster_sizes[k]
+    end
+    resize!(centroids, K)
+    return nothing
+end
+
 function run_k_means(
     data::Data{Dim},
     z_sol::Matrix{Float64},
@@ -88,34 +120,16 @@ function run_k_means(
     cluster_sizes::Vector{Int},
 )::Float64 where {Dim}
     n = length(data.points)
-    K = length(cluster_sizes)
     cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
-    resize!(centroids, 2 * K)
+    @show cost
     while true
-        for k in 1:K
-            centroids[K+k] = ntuple(_ -> 0.0, Dim)
-        end
-        fill!(cluster_sizes, 0)
-        for i in 1:n
-            min_dist = Inf
-            for k in 1:K
-                dist = sum((data.points[i] .- centroids[k]) .^ 2)
-                if dist < min_dist
-                    min_dist = dist
-                    points_to_cluster[i] = k
-                end
-            end
-            centroids[K+points_to_cluster[i]]   = centroids[K+points_to_cluster[i]] .+ data.points[i]
-            cluster_sizes[points_to_cluster[i]] += 1
-        end
-        for k in 1:K
-            centroids[k] = centroids[K+k] ./ cluster_sizes[k]
-        end
+        assign_to_clusters(data, centroids, points_to_cluster, cluster_sizes)
         new_cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
         if new_cost >= cost - 1e-6 * max(cost, new_cost)
             cost = new_cost
             break
         end
+        @show new_cost
         cost = new_cost
     end
     if sol_cost > cost
@@ -136,125 +150,149 @@ function run_rounding_heuristic(
     centroids::Vector{NTuple{Dim, Float64}},
     points_to_cluster::Vector{Int},
     cluster_sizes::Vector{Int},
-    min_dist::Vector{Float64},
-    closest::Vector{Int},
+    # min_dist::Vector{Float64},
+    # closest::Vector{Int},
+    unused::Vector{Int},
 )::Float64 where {Dim}
-    # function to compute a distance weighted by the correspondence between the leaders given by the
-    # SDP relaxation
-    dist_(i::Int, j::Int) =
-        sum((centroids[i] .- centroids[j]) .^ 2) * (1.1 - z_[i, j] / sqrt(z_[i, i] * z_[j, j]))
-
-    # initializations
     n = length(data.points)
     K = length(cluster_sizes)
+    resize!(unused, n)
     for i in 1:n
-        points_to_cluster[i] = i
+        unused[i] = i
     end
-    resize!(centroids, n)
-    centroids .= data.points
-    resize!(cluster_sizes, n)
-    fill!(cluster_sizes, 1)
-    fill!(min_dist, Inf)
-    for i in 1:n, j in (i+1):n
-        d_ = dist_(i, j)
-        if min_dist[i] > d_
-            min_dist[i] = d_
-            closest[i] = j
+    for k in 1:K
+        pos = rand(1:length(unused))
+        unused[pos], unused[end] = unused[end], unused[pos]
+        i = pop!(unused)
+        centroids[k] = data.points[i]
+        sort!(unused, by = j -> z_[i, j])
+        s = min(length(unused) - K + k, ceil(Int, (n / K) * (1 / z_[i, i])))
+        @show s
+        first = length(unused) + 2 - s
+        for pos in first:length(unused)
+            centroids[k] = centroids[k] .+ data.points[unused[pos]]
         end
+        centroids[k] = centroids[k] ./ s
+        resize!(unused, first - 1)
     end
+    assign_to_clusters(data, centroids, points_to_cluster, cluster_sizes)
 
-    # loop joining clusters until only K remain
-    nb_clusters = n
-    while nb_clusters > K
-        # find the smallest cluster distance to join
-        to_join = 0
-        join_dist = Inf
-        for i in 1:n
-            if points_to_cluster[i] != i
-                continue
-            end
-            if join_dist > min_dist[i]
-                join_dist = min_dist[i]
-                to_join = i
-            end
-        end
-        i = to_join
-        j = closest[i]
+    # # function to compute a distance weighted by the correspondence between the leaders given by the
+    # # SDP relaxation
+    # dist_(i::Int, j::Int) =
+    #     sum((centroids[i] .- centroids[j]) .^ 2) * (1.1 - z_[i, j] / sqrt(z_[i, i] * z_[j, j]))
 
-        # join clusters i and j choosing the leader randomly
-        if rand(Bool)
-            points_to_cluster[j] = i
-        else
-            points_to_cluster[i] = j
-            i, j = j, i
-        end
+    # # initializations
+    # n = length(data.points)
+    # K = length(cluster_sizes)
+    # for i in 1:n
+    #     points_to_cluster[i] = i
+    # end
+    # resize!(centroids, n)
+    # centroids .= data.points
+    # resize!(cluster_sizes, n)
+    # fill!(cluster_sizes, 1)
+    # fill!(min_dist, Inf)
+    # for i in 1:n, j in (i+1):n
+    #     d_ = dist_(i, j)
+    #     if min_dist[i] > d_
+    #         min_dist[i] = d_
+    #         closest[i] = j
+    #     end
+    # end
 
-        # update the centroids and distances
-        centroids[i] =
-            (
-                cluster_sizes[i] .* centroids[i] .+ cluster_sizes[j] .* centroids[j]
-            ) ./ (cluster_sizes[i] + cluster_sizes[j])
-        cluster_sizes[i] += cluster_sizes[j]
-        min_dist[i] = Inf
-        for l in 1:n
-            if points_to_cluster[l] != l || l == i
-                continue
-            end
-            d_ = dist_(i, l)
-            if i < l
-                if min_dist[i] > d_
-                    min_dist[i] = d_
-                    closest[i] = l
-                end
-            else
-                if min_dist[l] > d_
-                    min_dist[l] = d_
-                    closest[l] = i
-                end
-            end
-        end
-        for i in 1:n
-            if closest[i] == j
-                min_dist[i] = Inf
-                for l in (i+1):n
-                    if points_to_cluster[l] != l
-                        continue
-                    end
-                    d_ = dist_(i, l)
-                    if min_dist[i] > d_
-                        min_dist[i] = d_
-                        closest[i] = l
-                    end
-                end
-            end
-        end
-        nb_clusters -= 1
-    end
+    # # loop joining clusters until only K remain
+    # nb_clusters = n
+    # while nb_clusters > K
+    #     # find the smallest cluster distance to join
+    #     to_join = 0
+    #     join_dist = Inf
+    #     for i in 1:n
+    #         if points_to_cluster[i] != i
+    #             continue
+    #         end
+    #         if join_dist > min_dist[i]
+    #             join_dist = min_dist[i]
+    #             to_join = i
+    #         end
+    #     end
+    #     i = to_join
+    #     j = closest[i]
 
-    # compact the clusters vectors and run the K-means to improve
-    k = 0
-    for i in 1:n
-        if points_to_cluster[i] == i
-            k += 1
-            points_to_cluster[i] = k
-            centroids[k] = centroids[i]
-            cluster_sizes[k] = cluster_sizes[i]
-        else
-            points_to_cluster[i] = -points_to_cluster[i]
-        end
-    end
-    changed = true
-    while changed
-        changed = false
-        for i in 1:n
-            if points_to_cluster[i] < 0
-                points_to_cluster[i] = points_to_cluster[-points_to_cluster[i]]
-                changed = true
-            end
-        end
-    end
-    resize!(centroids, K)
-    resize!(cluster_sizes, K)
+    #     # join clusters i and j choosing the leader randomly
+    #     if rand(Bool)
+    #         points_to_cluster[j] = i
+    #     else
+    #         points_to_cluster[i] = j
+    #         i, j = j, i
+    #     end
+
+    #     # update the centroids and distances
+    #     centroids[i] =
+    #         (
+    #             cluster_sizes[i] .* centroids[i] .+ cluster_sizes[j] .* centroids[j]
+    #         ) ./ (cluster_sizes[i] + cluster_sizes[j])
+    #     cluster_sizes[i] += cluster_sizes[j]
+    #     min_dist[i] = Inf
+    #     for l in 1:n
+    #         if points_to_cluster[l] != l || l == i
+    #             continue
+    #         end
+    #         d_ = dist_(i, l)
+    #         if i < l
+    #             if min_dist[i] > d_
+    #                 min_dist[i] = d_
+    #                 closest[i] = l
+    #             end
+    #         else
+    #             if min_dist[l] > d_
+    #                 min_dist[l] = d_
+    #                 closest[l] = i
+    #             end
+    #         end
+    #     end
+    #     for i in 1:n
+    #         if closest[i] == j
+    #             min_dist[i] = Inf
+    #             for l in (i+1):n
+    #                 if points_to_cluster[l] != l
+    #                     continue
+    #                 end
+    #                 d_ = dist_(i, l)
+    #                 if min_dist[i] > d_
+    #                     min_dist[i] = d_
+    #                     closest[i] = l
+    #                 end
+    #             end
+    #         end
+    #     end
+    #     nb_clusters -= 1
+    # end
+
+    # # compact the clusters vectors and run the K-means to improve
+    # k = 0
+    # for i in 1:n
+    #     if points_to_cluster[i] == i
+    #         k += 1
+    #         points_to_cluster[i] = k
+    #         centroids[k] = centroids[i]
+    #         cluster_sizes[k] = cluster_sizes[i]
+    #     else
+    #         points_to_cluster[i] = -points_to_cluster[i]
+    #     end
+    # end
+    # changed = true
+    # while changed
+    #     changed = false
+    #     for i in 1:n
+    #         if points_to_cluster[i] < 0
+    #             points_to_cluster[i] = points_to_cluster[-points_to_cluster[i]]
+    #             changed = true
+    #         end
+    #     end
+    # end
+    # resize!(centroids, K)
+    # resize!(cluster_sizes, K)
     return run_k_means(data, z_sol, sol_cost, centroids, points_to_cluster, cluster_sizes)
 end
 
@@ -262,8 +300,9 @@ struct HeuristicBuffers{Dim}
     centroids::Vector{NTuple{Dim, Float64}}
     points_to_cluster::Vector{Int}
     cluster_sizes::Vector{Int}
-    min_dist::Vector{Float64}
-    closest::Vector{Int}
+    # min_dist::Vector{Float64}
+    # closest::Vector{Int}
+    unused::Vector{Int}
 end
 
 function HeuristicBuffers{Dim}(n::Int, K::Int) where {Dim}
@@ -271,7 +310,7 @@ function HeuristicBuffers{Dim}(n::Int, K::Int) where {Dim}
         Vector{NTuple{Dim, Float64}}(undef, K),
         Vector{Int}(undef, n),
         Vector{Int}(undef, K),
-        Vector{Float64}(undef, n),
+        # Vector{Float64}(undef, n),
         Vector{Int}(undef, n),
     )
 end
@@ -280,6 +319,7 @@ function compute_and_check_solution(
     data::Data{Dim},
     y_::Matrix{Float64},
     check_cost::Float64,
+    check_K::Int,
 )::Solution where {Dim}
     # Find the clusters
     n = length(data.points)
@@ -315,6 +355,9 @@ function compute_and_check_solution(
     cost = 0.0
     for i in 1:n
         cost += sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2)
+    end
+    if K != check_K
+        println("ERROR: solution has $K clusters instead of $check_K")
     end
     if abs(cost - check_cost) > 1e-6 * max(cost, check_cost)
         println("ERROR: computed cost $cost does not match check cost $check_cost")
@@ -357,7 +400,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     target_obj = Inf
     z_target = zeros(Float64, n, n)
     buffers = HeuristicBuffers{Dim}(n, K)
-    alpha = 0.0 # 0.99
+    alpha = 0.9
     z_ = zeros(Float64, n, n)
     z_aux = zeros(Float64, n, n)
     pivot_cuts = Vector{PivotCut}()
@@ -414,8 +457,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             buffers.centroids,
             buffers.points_to_cluster,
             buffers.cluster_sizes,
-            buffers.min_dist,
-            buffers.closest,
+            # buffers.min_dist,
+            # buffers.closest,
+            buffers.unused,
         )
 
         # remove cuts that are not needed
@@ -473,7 +517,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 if nb_cuts > 2 * n
                     alpha += (1 - alpha) / 5
                 end
-                if alpha < 0.95
+                if alpha < 0.1
                     alpha = 0.0
                 end
             end
@@ -500,5 +544,5 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     # println("z_ = $z_")
     # @show objective_value(model)
     # @show -(K / n) * 1e-3 * sum(data.costs[i, j] * z_[i, j] for i in 1:n, j in 1:n)
-    return compute_and_check_solution(data, z_, obj)
+    return compute_and_check_solution(data, z_target, target_obj, K)
 end
