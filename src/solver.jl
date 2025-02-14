@@ -129,8 +129,8 @@ function run_k_means(
             cost = new_cost
             break
         end
-        @show new_cost
-        # cost = new_cost
+        # @show new_cost
+        cost = new_cost
     end
     if sol_cost > cost
         for i in 1:n, j in 1:n
