@@ -121,7 +121,7 @@ function run_k_means(
 )::Float64 where {Dim}
     n = length(data.points)
     cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
-    @show cost
+    # @show cost
     while true
         assign_to_clusters(data, centroids, points_to_cluster, cluster_sizes)
         new_cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
@@ -130,7 +130,7 @@ function run_k_means(
             break
         end
         @show new_cost
-        cost = new_cost
+        # cost = new_cost
     end
     if sol_cost > cost
         for i in 1:n, j in 1:n
@@ -167,7 +167,6 @@ function run_rounding_heuristic(
         centroids[k] = data.points[i]
         sort!(unused, by = j -> z_[i, j])
         s = min(length(unused) - K + k, ceil(Int, (n / K) * (1 / z_[i, i])))
-        @show s
         first = length(unused) + 2 - s
         for pos in first:length(unused)
             centroids[k] = centroids[k] .+ data.points[unused[pos]]
