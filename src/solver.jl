@@ -527,7 +527,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
         @show cut_round, target_obj, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
-        if nb_cuts == 0 || (diff < 1e-6 * new_obj && !tol_was_decreased)
+        if nb_cuts == 0 || (new_obj > target_obj) || (diff < 1e-6 * new_obj && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
             end
