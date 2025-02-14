@@ -79,8 +79,201 @@ function separate_pivot_cuts!(
     return cuts
 end
 
-struct SdpCut
-    vec::Vector{Float64}
+function run_k_means(
+    data::Data{Dim},
+    z_sol::Matrix{Float64},
+    sol_cost::Float64,
+    centroids::Vector{NTuple{Dim, Float64}},
+    points_to_cluster::Vector{Int},
+    cluster_sizes::Vector{Int},
+)::Float64 where {Dim}
+    n = length(data.points)
+    K = length(cluster_sizes)
+    cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
+    resize!(centroids, 2 * K)
+    while true
+        for k in 1:K
+            centroids[K+k] = ntuple(_ -> 0.0, Dim)
+        end
+        fill!(cluster_sizes, 0)
+        for i in 1:n
+            min_dist = Inf
+            for k in 1:K
+                dist = sum((data.points[i] .- centroids[k]) .^ 2)
+                if dist < min_dist
+                    min_dist = dist
+                    points_to_cluster[i] = k
+                end
+            end
+            centroids[K+points_to_cluster[i]]   = centroids[K+points_to_cluster[i]] .+ data.points[i]
+            cluster_sizes[points_to_cluster[i]] += 1
+        end
+        for k in 1:K
+            centroids[k] = centroids[K+k] ./ cluster_sizes[k]
+        end
+        new_cost = sum(sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2) for i in 1:n)
+        if new_cost >= cost - 1e-6 * max(cost, new_cost)
+            cost = new_cost
+            break
+        end
+        cost = new_cost
+    end
+    if sol_cost > cost
+        for i in 1:n, j in 1:n
+            k = points_to_cluster[i]
+            z_sol[i, j] = (k == points_to_cluster[j]) ? (1 / cluster_sizes[k]) : 0.0
+        end
+        return cost
+    end
+    return sol_cost
+end
+
+function run_rounding_heuristic(
+    data::Data{Dim},
+    z_::Matrix{Float64},
+    z_sol::Matrix{Float64},
+    sol_cost::Float64,
+    centroids::Vector{NTuple{Dim, Float64}},
+    points_to_cluster::Vector{Int},
+    cluster_sizes::Vector{Int},
+    min_dist::Vector{Float64},
+    closest::Vector{Int},
+)::Float64 where {Dim}
+    # function to compute a distance weighted by the correspondence between the leaders given by the
+    # SDP relaxation
+    dist_(i::Int, j::Int) =
+        sum((centroids[i] .- centroids[j]) .^ 2) * (1.1 - z_[i, j] / sqrt(z_[i, i] * z_[j, j]))
+
+    # initializations
+    n = length(data.points)
+    K = length(cluster_sizes)
+    for i in 1:n
+        points_to_cluster[i] = i
+    end
+    resize!(centroids, n)
+    centroids .= data.points
+    resize!(cluster_sizes, n)
+    fill!(cluster_sizes, 1)
+    fill!(min_dist, Inf)
+    for i in 1:n, j in (i+1):n
+        d_ = dist_(i, j)
+        if min_dist[i] > d_
+            min_dist[i] = d_
+            closest[i] = j
+        end
+    end
+
+    # loop joining clusters until only K remain
+    nb_clusters = n
+    while nb_clusters > K
+        # find the smallest cluster distance to join
+        to_join = 0
+        join_dist = Inf
+        for i in 1:n
+            if points_to_cluster[i] != i
+                continue
+            end
+            if join_dist > min_dist[i]
+                join_dist = min_dist[i]
+                to_join = i
+            end
+        end
+        i = to_join
+        j = closest[i]
+
+        # join clusters i and j choosing the leader randomly
+        if rand(Bool)
+            points_to_cluster[j] = i
+        else
+            points_to_cluster[i] = j
+            i, j = j, i
+        end
+
+        # update the centroids and distances
+        centroids[i] =
+            (
+                cluster_sizes[i] .* centroids[i] .+ cluster_sizes[j] .* centroids[j]
+            ) ./ (cluster_sizes[i] + cluster_sizes[j])
+        cluster_sizes[i] += cluster_sizes[j]
+        min_dist[i] = Inf
+        for l in 1:n
+            if points_to_cluster[l] != l || l == i
+                continue
+            end
+            d_ = dist_(i, l)
+            if i < l
+                if min_dist[i] > d_
+                    min_dist[i] = d_
+                    closest[i] = l
+                end
+            else
+                if min_dist[l] > d_
+                    min_dist[l] = d_
+                    closest[l] = i
+                end
+            end
+        end
+        for i in 1:n
+            if closest[i] == j
+                min_dist[i] = Inf
+                for l in (i+1):n
+                    if points_to_cluster[l] != l
+                        continue
+                    end
+                    d_ = dist_(i, l)
+                    if min_dist[i] > d_
+                        min_dist[i] = d_
+                        closest[i] = l
+                    end
+                end
+            end
+        end
+        nb_clusters -= 1
+    end
+
+    # compact the clusters vectors and run the K-means to improve
+    k = 0
+    for i in 1:n
+        if points_to_cluster[i] == i
+            k += 1
+            points_to_cluster[i] = k
+            centroids[k] = centroids[i]
+            cluster_sizes[k] = cluster_sizes[i]
+        else
+            points_to_cluster[i] = -points_to_cluster[i]
+        end
+    end
+    changed = true
+    while changed
+        changed = false
+        for i in 1:n
+            if points_to_cluster[i] < 0
+                points_to_cluster[i] = points_to_cluster[-points_to_cluster[i]]
+                changed = true
+            end
+        end
+    end
+    resize!(centroids, K)
+    resize!(cluster_sizes, K)
+    return run_k_means(data, z_sol, sol_cost, centroids, points_to_cluster, cluster_sizes)
+end
+
+struct HeuristicBuffers{Dim}
+    centroids::Vector{NTuple{Dim, Float64}}
+    points_to_cluster::Vector{Int}
+    cluster_sizes::Vector{Int}
+    min_dist::Vector{Float64}
+    closest::Vector{Int}
+end
+
+function HeuristicBuffers{Dim}(n::Int, K::Int) where {Dim}
+    return HeuristicBuffers{Dim}(
+        Vector{NTuple{Dim, Float64}}(undef, K),
+        Vector{Int}(undef, n),
+        Vector{Int}(undef, K),
+        Vector{Float64}(undef, n),
+        Vector{Int}(undef, n),
+    )
 end
 
 function compute_and_check_solution(
@@ -90,19 +283,19 @@ function compute_and_check_solution(
 )::Solution where {Dim}
     # Find the clusters
     n = length(data.points)
-    point_to_cluster = zeros(Int, n)
-    point_to_cluster[n] = 1
+    points_to_cluster = zeros(Int, n)
+    points_to_cluster[n] = 1
     K = 1
     for i in (n-1):-1:1
         for j in (i+1):n
             if y_[i, j] > 0.5 * y_[i, i]
-                point_to_cluster[i] = point_to_cluster[j]
+                points_to_cluster[i] = points_to_cluster[j]
                 break
             end
         end
-        if point_to_cluster[i] == 0
+        if points_to_cluster[i] == 0
             K += 1
-            point_to_cluster[i] = K
+            points_to_cluster[i] = K
         end
     end
 
@@ -110,7 +303,7 @@ function compute_and_check_solution(
     centroids = [ntuple(x -> 0.0, Dim) for _ in 1:K]
     cluster_sizes = zeros(Int, K)
     for i in 1:n
-        k = point_to_cluster[i]
+        k = points_to_cluster[i]
         cluster_sizes[k] += 1
         centroids[k] = centroids[k] .+ data.points[i]
     end
@@ -121,14 +314,14 @@ function compute_and_check_solution(
     # Compute the solution cost and check
     cost = 0.0
     for i in 1:n
-        cost += sum((data.points[i] .- centroids[point_to_cluster[i]]) .^ 2)
+        cost += sum((data.points[i] .- centroids[points_to_cluster[i]]) .^ 2)
     end
     if abs(cost - check_cost) > 1e-6 * max(cost, check_cost)
         println("ERROR: computed cost $cost does not match check cost $check_cost")
     end
 
     # Return the solution
-    return Solution(cost, [findall(x -> x == k, point_to_cluster) for k in 1:K])
+    return Solution(cost, [findall(x -> x == k, points_to_cluster) for k in 1:K])
 end
 
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
@@ -161,10 +354,12 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     end)
 
     # loop adding triangle cuts
-    z_target = zeros(Float64, 0, 0)
+    target_obj = Inf
+    z_target = zeros(Float64, n, n)
+    buffers = HeuristicBuffers{Dim}(n, K)
     alpha = 0.0 # 0.99
-    z_ = zeros(n, n)
-    z_aux = zeros(n, n)
+    z_ = zeros(Float64, n, n)
+    z_aux = zeros(Float64, n, n)
     pivot_cuts = Vector{PivotCut}()
     triangle_cuts = Vector{TriangleCut}()
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
@@ -199,8 +394,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         nb_infeas = 0
         max_infeas = 0.0
-        for i in 1:n, j in i:n
+        for i in 1:n, j in 1:n
             z_[i, j] = value(z[i, j])
+            # d_[i, j] = dual(LowerBoundRef(z[i, j]))
             infeas = 0.5 - abs(z_[i, j] / z_[i, i] - 0.5)
             max_infeas = max(max_infeas, infeas)
             if infeas < 1e-2
@@ -210,9 +406,17 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         if nb_infeas == 0
             break
         end
-        if isempty(z_target)
-            z_target = copy(z_)
-        end
+        target_obj = run_rounding_heuristic(
+            data,
+            z_,
+            z_target,
+            target_obj,
+            buffers.centroids,
+            buffers.points_to_cluster,
+            buffers.cluster_sizes,
+            buffers.min_dist,
+            buffers.closest,
+        )
 
         # remove cuts that are not needed
         c = 1
@@ -279,7 +483,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
-        @show cut_round, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
+        @show cut_round, target_obj, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
         if nb_cuts == 0 || (diff < 1e-6 * new_obj && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
