@@ -355,7 +355,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         cut_round += 1
         nb_cuts = 0
         first = true
-        while first || (alpha > 0.0 && nb_cuts == 0)
+        reduced_alpha = false
+        last_cut = length(added_cuts)
+        while first || reduced_alpha
             update_z_aux()
             nb_cuts = 0
             separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
@@ -385,11 +387,17 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                     break
                 end
             end
+            reduced_alpha = false
             if alpha != 0.0
-                if nb_cuts < 2 * n
+                if nb_cuts < target_nb_cuts
                     alpha -= (1 - alpha) / 3
+                    reduced_alpha = true
+                    for c in (last_cut+1):length(added_cuts)
+                        JuMP.delete(model, added_cuts[c])
+                    end
+                    resize!(added_cuts, last_cut)
                 end
-                if nb_cuts > 2 * n
+                if nb_cuts > 2 * target_nb_cuts
                     alpha += (1 - alpha) / 5
                 end
                 if alpha < 0.1
