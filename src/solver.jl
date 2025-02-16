@@ -409,6 +409,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         best_bound = max(best_bound, safe_bound)
         gap = (target_obj - best_bound) / target_obj
         if gap <= gap_tol
+            @show cut_round, target_obj, best_bound, curr_tol, sdp_time, gap
             break
         end
 
