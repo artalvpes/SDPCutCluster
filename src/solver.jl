@@ -4,9 +4,10 @@ struct Solution
 end
 
 const target_tol = 1e-6
+const gap_tol = 1e-4
 const tol_step = 0.5
 const max_nb_cuts = 5000
-const target_nb_cuts = 1000
+const target_nb_cuts = 2000
 
 tol_is_ok(tol::Float64)::Bool = abs(tol - target_tol) < 1e-6 * target_tol
 
@@ -244,6 +245,57 @@ function compute_and_check_solution(
     return Solution(cost, [findall(x -> x == k, points_to_cluster) for k in 1:K])
 end
 
+function compute_safe_bound(
+    data::Data{Dim},
+    _pi::Float64,
+    _sigma::Vector{Float64},
+    cut_duals::Vector{Float64},
+    cut_indices::Vector{Tuple{Int, Int, Int}},
+    _alpha::Matrix{Float64},
+    K::Int,
+    P::Matrix{Float64},
+)::Float64 where {Dim}
+    n = length(data.points)
+    # @show data.fixed_cost
+    # @show _pi
+    # @show _sigma
+    # @show cut_duals
+    # @show _alpha
+
+    # compute the maximum eigenvalue of the P matrix
+    for i in 1:n, j in 1:n
+        P[i, j] = -(K / n) * data.costs[i, j] - _sigma[i] - _alpha[i, j]
+        if i == j
+            P[i, j] -= _pi
+        end
+    end
+    for c in 1:length(cut_duals)
+        i, j, l = cut_indices[c]
+        if l == 0
+            P[i, j] += cut_duals[c]
+            P[i, i] -= cut_duals[c]
+        else
+            P[j, l] -= cut_duals[c]
+            P[i, j] += cut_duals[c]
+            P[i, l] += cut_duals[c]
+            P[i, i] -= cut_duals[c]
+        end
+    end
+    for i in 1:n, j in (i+1):n
+        P[i, j] = P[j, i] = 0.5 * (P[i, j] + P[j, i])
+    end
+    lambda_min = eigvals(P)[1]
+    # @show P
+    # @show eigvals(P)
+
+    # return the safe bound
+    if lambda_min < 0.0
+        _pi += lambda_min
+    end
+    return data.fixed_cost + n * _pi + (n / K) * sum(_sigma) +
+           (n / (K * (n - K + 1))) * sum(_alpha[i, i] for i in 1:n)
+end
+
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     println("Solving $(length(data.points)) points in $(Dim) dimensions")
     mat"maxNumCompThreads(1)"
@@ -260,7 +312,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         set_optimizer_attribute(model, "verbose", false)
     end
     @variables(model, begin
-        z[i = 1:n, j = 1:n] >= ((i == j) ? (K / (n - K + 1)) : 0.0), PSD
+        z[i = 1:n, j = 1:n] >= ((i == j) ? (n / (K * (n - K + 1))) : 0.0), PSD
     end)
     @objective(
         model,
@@ -268,16 +320,15 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         -(K / n) * sum(data.costs[i, j] * z[i, j] for i in 1:n, j in 1:n)
     )
     @constraints(model, begin
-        c1, sum(z[i, i] for i in 1:n) == n
-        c2[i = 1:n], sum(z[i, j] for j in 1:n) == (n / K)
-        # c3[i = 1:n, j = 1:n; i != j], z[i, i] >= z[i, j]
+        c_pi, sum(z[i, i] for i in 1:n) == n
+        c_sigma[i = 1:n], sum(z[i, j] for j in 1:n) == (n / K)
     end)
 
     # loop adding triangle cuts
     target_obj = Inf
     z_target = zeros(Float64, n, n)
     buffers = HeuristicBuffers{Dim}(n, K)
-    alpha = 0.9
+    alpha = 0.0 # 0.9
     z_ = zeros(Float64, n, n)
     z_aux = zeros(Float64, n, n)
     pivot_cuts = Vector{PivotCut}()
@@ -291,11 +342,17 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     end
     added_cuts = Vector{ConstraintRef}()
     should_keep = Vector{Bool}()
+    cut_indices = Vector{Tuple{Int, Int, Int}}()
+    _sigma = zeros(Float64, n)
+    cut_duals = Float64[]
+    _alpha = zeros(Float64, n, n)
+    P = zeros(Float64, n, n)
     cut_round = 0
     obj = 0.0
     curr_tol = 1e-2
     min_viol = sqrt(curr_tol)
     tol_was_decreased = false
+    best_bound = 0.0
     while true
         # solve the SDP relaxation
         if SDPSolverName == "SDPNAL"
@@ -316,7 +373,6 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         max_infeas = 0.0
         for i in 1:n, j in 1:n
             z_[i, j] = value(z[i, j])
-            # d_[i, j] = dual(LowerBoundRef(z[i, j]))
             infeas = 0.5 - abs(z_[i, j] / z_[i, i] - 0.5)
             max_infeas = max(max_infeas, infeas)
             if infeas < 1e-2
@@ -337,6 +393,25 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             buffers.unused,
         )
 
+        # compute a safe bound and the gap
+        _pi = dual(c_pi)
+        for i in 1:n
+            _sigma[i] = dual(c_sigma[i])
+        end
+        resize!(cut_duals, length(added_cuts))
+        for c in 1:length(added_cuts)
+            cut_duals[c] = max(0.0, dual(added_cuts[c]))
+        end
+        for i in 1:n, j in 1:n
+            _alpha[i, j] = 0.5 * max(0.0, dual(LowerBoundRef(z[i, j])))
+        end
+        safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P)
+        best_bound = max(best_bound, safe_bound)
+        gap = (target_obj - best_bound) / target_obj
+        if gap <= gap_tol
+            break
+        end
+
         # remove cuts that are not needed
         c = 1
         while c <= remain_cuts
@@ -346,6 +421,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 pop!(added_cuts)
                 should_keep[c], should_keep[end] = should_keep[end], should_keep[c]
                 pop!(should_keep)
+                cut_indices[c], cut_indices[end] = cut_indices[end], cut_indices[c]
+                pop!(cut_indices)
                 remain_cuts -= 1
             end
             c += 1
@@ -368,6 +445,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 end
                 nb_cuts += 1
                 push!(added_cuts, @constraint(model, z[cut.i, cut.i] >= z[cut.i, cut.j]))
+                push!(cut_indices, (cut.i, cut.j, 0))
                 if nb_cuts >= target_nb_cuts
                     break
                 end
@@ -383,7 +461,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                     added_cuts,
                     @constraint(model, z[cut.j, cut.l] >= z[cut.i, cut.j] + z[cut.i, cut.l] - z[cut.i, cut.i])
                 )
-                if nb_cuts > 2 * target_nb_cuts
+                push!(cut_indices, (cut.i, cut.j, cut.l))
+                if nb_cuts >= 2 * target_nb_cuts
                     break
                 end
             end
@@ -396,8 +475,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                         JuMP.delete(model, added_cuts[c])
                     end
                     resize!(added_cuts, last_cut)
+                    resize!(cut_indices, last_cut)
                 end
-                if nb_cuts > 2 * target_nb_cuts
+                if nb_cuts >= 2 * target_nb_cuts
                     alpha += (1 - alpha) / 5
                 end
                 if alpha < 0.1
@@ -410,7 +490,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
         diff = round(new_obj - obj, digits = 5)
         obj = new_obj
-        @show cut_round, target_obj, new_obj, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time
+        @show cut_round, target_obj, safe_bound, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time, gap
         if nb_cuts == 0 || (new_obj > target_obj) || (diff < 1e-6 * new_obj && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
