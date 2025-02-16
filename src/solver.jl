@@ -256,11 +256,15 @@ function compute_safe_bound(
     P::Matrix{Float64},
 )::Float64 where {Dim}
     n = length(data.points)
-    # @show data.fixed_cost
-    # @show _pi
-    # @show _sigma
-    # @show cut_duals
-    # @show _alpha
+    write("fixed_cost.bin", data.fixed_cost)
+    write("costs.bin", data.costs)
+    write("pi.bin", _pi)
+    write("sigma.bin", _sigma)
+    write("cut_duals.bin", cut_duals)
+    write("cut_i.bin", getindex.(cut_indices, 1))
+    write("cut_j.bin", getindex.(cut_indices, 2))
+    write("cut_l.bin", getindex.(cut_indices, 3))
+    write("alpha.bin", _alpha)
 
     # compute the maximum eigenvalue of the P matrix
     for i in 1:n, j in 1:n
@@ -287,6 +291,7 @@ function compute_safe_bound(
     lambda_min = eigvals(P)[1]
     # @show P
     # @show eigvals(P)
+    write("P.bin", P)
 
     # return the safe bound
     if lambda_min < 0.0
