@@ -404,9 +404,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         for i in 1:n, j in 1:n
             _alpha[i, j] = max(0.0, dual(LowerBoundRef(z[i, j])))
-	    if SDPSolverName == "SCS"
+            if SDPSolverName == "SCS" && i != j
                 _alpha[i, j] *= 0.5
-	    end
+            end
         end
         safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P)
         best_bound = max(best_bound, safe_bound)
