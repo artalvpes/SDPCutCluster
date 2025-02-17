@@ -145,6 +145,7 @@ function run_k_means(
 end
 
 function run_rounding_heuristic(
+    rng::MersenneTwister,
     data::Data{Dim},
     z_::Matrix{Float64},
     z_sol::Matrix{Float64},
@@ -161,7 +162,7 @@ function run_rounding_heuristic(
         unused[i] = i
     end
     for k in 1:K
-        pos = rand(1:length(unused))
+        pos = rand(rng, 1:length(unused))
         unused[pos], unused[end] = unused[end], unused[pos]
         i = pop!(unused)
         centroids[k] = data.points[i]
@@ -353,6 +354,7 @@ end
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     println("Solving $(length(data.points)) points in $(Dim) dimensions")
     mat"maxNumCompThreads(1)"
+    rng = MersenneTwister(12345678)
 
     # Set the constants
     n = length(data.points)
@@ -438,6 +440,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             break
         end
         target_obj = run_rounding_heuristic(
+            rng,
             data,
             z_,
             z_target,

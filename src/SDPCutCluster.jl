@@ -1,6 +1,6 @@
 module SDPCutCluster
 
-using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB
+using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB, Random
 
 # using SCS
 # const SDPSolver = SCS
