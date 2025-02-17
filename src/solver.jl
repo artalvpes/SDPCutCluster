@@ -8,6 +8,7 @@ const gap_tol = 1e-4
 const tol_step = 0.5
 const max_nb_cuts = 5000
 const target_nb_cuts = 2000
+const max_safe_bound_iters = 10
 
 tol_is_ok(tol::Float64)::Bool = abs(tol - target_tol) < 1e-6 * target_tol
 
@@ -245,30 +246,19 @@ function compute_and_check_solution(
     return Solution(cost, [findall(x -> x == k, points_to_cluster) for k in 1:K])
 end
 
-function compute_safe_bound(
-    data::Data{Dim},
+function compute_P!(
+    n::Int,
+    K::Int,
+    costs::Matrix{Float64},
     _pi::Float64,
     _sigma::Vector{Float64},
+    _alpha::Matrix{Float64},
     cut_duals::Vector{Float64},
     cut_indices::Vector{Tuple{Int, Int, Int}},
-    _alpha::Matrix{Float64},
-    K::Int,
     P::Matrix{Float64},
-)::Float64 where {Dim}
-    n = length(data.points)
-    write("fixed_cost.bin", data.fixed_cost)
-    write("costs.bin", data.costs)
-    write("pi.bin", _pi)
-    write("sigma.bin", _sigma)
-    write("cut_duals.bin", cut_duals)
-    write("cut_i.bin", getindex.(cut_indices, 1))
-    write("cut_j.bin", getindex.(cut_indices, 2))
-    write("cut_l.bin", getindex.(cut_indices, 3))
-    write("alpha.bin", _alpha)
-
-    # compute the maximum eigenvalue of the P matrix
+)
     for i in 1:n, j in 1:n
-        P[i, j] = -(K / n) * data.costs[i, j] - _sigma[i] - _alpha[i, j]
+        P[i, j] = -(K / n) * costs[i, j] - _sigma[i] - _alpha[i, j]
         if i == j
             P[i, j] -= _pi
         end
@@ -288,10 +278,69 @@ function compute_safe_bound(
     for i in 1:n, j in (i+1):n
         P[i, j] = P[j, i] = 0.5 * (P[i, j] + P[j, i])
     end
-    lambda_min = eigvals(P)[1]
+    return nothing
+end
+
+function compute_eigen_gradient!(
+    cut_indices::Vector{Tuple{Int, Int, Int}},
+    eigvec::Vector{Float64},
+    grad::Vector{Float64},
+)
+    grad .= 0.0
+    for c in 1:length(cut_indices)
+        i, j, l = cut_indices[c]
+        if l == 0
+            grad[c] += eigvec[i] * eigvec[j] - eigvec[i] * eigvec[i]
+        else
+            grad[c] +=
+                eigvec[i] * eigvec[j] + eigvec[i] * eigvec[l] - eigvec[i] * eigvec[i] - eigvec[j] * eigvec[l]
+        end
+    end
+end
+
+function compute_safe_bound(
+    data::Data{Dim},
+    _pi::Float64,
+    _sigma::Vector{Float64},
+    cut_duals::Vector{Float64},
+    cut_indices::Vector{Tuple{Int, Int, Int}},
+    _alpha::Matrix{Float64},
+    K::Int,
+    P::Matrix{Float64},
+    cut_grad::Vector{Float64},
+)::Float64 where {Dim}
+    n = length(data.points)
+    # write("fixed_cost.bin", data.fixed_cost)
+    # write("costs.bin", data.costs)
+    # write("pi.bin", _pi)
+    # write("sigma.bin", _sigma)
+    # write("cut_duals.bin", cut_duals)
+    # write("cut_i.bin", getindex.(cut_indices, 1))
+    # write("cut_j.bin", getindex.(cut_indices, 2))
+    # write("cut_l.bin", getindex.(cut_indices, 3))
+    # write("alpha.bin", _alpha)
+
+    # compute the minimum eigenvalue of the P matrix and try to improve it by gradient descent
+    compute_P!(n, K, data.costs, _pi, _sigma, _alpha, cut_duals, cut_indices, P)
+    dec = eigen(P)
+    lambda_min = dec.values[1]
+    for _ in 1:max_safe_bound_iters
+        eigvec = dec.vectors[:, 1]
+        compute_eigen_gradient!(cut_indices, eigvec, cut_grad)
+        norm_g = sqrt(sum(cut_grad .^ 2))
+        cut_duals = map(x -> max(0, x), cut_duals .+ (-dec.values[1] / norm_g) * cut_grad / norm_g)
+        compute_P!(n, K, data.costs, _pi, _sigma, _alpha, cut_duals, cut_indices, P)
+        dec = eigen!(P)
+        new_lambda_min = dec.values[1]
+        if new_lambda_min - lambda_min > 1e-6
+            lambda_min = new_lambda_min
+        else
+            break
+        end
+    end
     # @show P
     # @show eigvals(P)
-    write("P.bin", P)
+    # write("P.bin", P)
 
     # return the safe bound
     if lambda_min < 0.0
@@ -350,6 +399,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     cut_indices = Vector{Tuple{Int, Int, Int}}()
     _sigma = zeros(Float64, n)
     cut_duals = Float64[]
+    cut_grad = Float64[]
     _alpha = zeros(Float64, n, n)
     P = zeros(Float64, n, n)
     cut_round = 0
@@ -413,7 +463,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 _alpha[i, j] *= 0.5
             end
         end
-        safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P)
+        resize!(cut_grad, length(added_cuts))
+        safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P, cut_grad)
         best_bound = max(best_bound, safe_bound)
         gap = (target_obj - best_bound) / target_obj
         if gap <= gap_tol
