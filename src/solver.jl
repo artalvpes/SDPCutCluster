@@ -3,9 +3,11 @@ struct Solution
     clusters::Vector{Vector{Int}}
 end
 
+const init_tol = 1e-3
 const target_tol = 1e-6
+const ph1_to_ph2_tol = 100
 const gap_tol = 1e-4
-const tol_step = 0.5
+const tol_step = 0.1
 const max_nb_cuts = 5000
 const target_nb_cuts = 2000
 const max_safe_bound_iters = 10
@@ -406,13 +408,14 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     P = zeros(Float64, n, n)
     cut_round = 0
     obj = 0.0
-    curr_tol = 1e-2
+    curr_tol = init_tol
     min_viol = sqrt(curr_tol)
     tol_was_decreased = false
     best_bound = 0.0
     while true
         # solve the SDP relaxation
         if SDPSolverName == "SDPNAL"
+            set_optimizer_attribute(model, "tolADM", curr_tol / ph1_to_ph2_tol)
             set_optimizer_attribute(model, "tol", curr_tol)
         else
             set_optimizer_attribute(model, "eps_rel", curr_tol)
