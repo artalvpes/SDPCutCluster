@@ -3,12 +3,13 @@ struct Solution
     clusters::Vector{Vector{Int}}
 end
 
-const init_tol = 1e-5
+const init_tol = 1e-3
 const target_tol = 1e-6
 const ph1_to_ph2_tol = 10
 const gap_tol = 1e-4
-const tol_step = 0.1
-const max_nb_cuts = 100000
+const tol_step = 0.2
+const max_nb_cuts = 1000000
+const min_tol_limit_cuts = 1e-4
 const target_nb_cuts = 5000
 const max_safe_bound_iters = 10
 
@@ -27,6 +28,7 @@ function separate_triangle_cuts!(
     cuts::Vector{TriangleCut},
     min_viol::Float64,
     perm::Vector{Int},
+    curr_tol::Float64,
 )::Vector{TriangleCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
@@ -51,15 +53,15 @@ function separate_triangle_cuts!(
                 if viol >= min_viol
                     push!(cuts, TriangleCut(l, i, j, viol))
                 end
-                if length(cuts) >= max_nb_cuts
+                if length(cuts) >= max_nb_cuts && curr_tol >= min_tol_limit_cuts
                     break
                 end
             end
-            if length(cuts) >= max_nb_cuts
+            if length(cuts) >= max_nb_cuts && curr_tol >= min_tol_limit_cuts
                 break
             end
         end
-        if length(cuts) >= max_nb_cuts
+        if length(cuts) >= max_nb_cuts && curr_tol >= min_tol_limit_cuts
             break
         end
     end
@@ -79,6 +81,7 @@ function separate_pivot_cuts!(
     cuts::Vector{PivotCut},
     min_viol::Float64,
     perm::Vector{Int},
+    curr_tol::Float64
 )::Vector{PivotCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
@@ -95,11 +98,11 @@ function separate_pivot_cuts!(
             if viol >= min_viol
                 push!(cuts, PivotCut(j, i, viol))
             end
-            if length(cuts) >= max_nb_cuts
+            if length(cuts) >= max_nb_cuts && curr_tol >= min_tol_limit_cuts
                 break
             end
         end
-        if length(cuts) >= max_nb_cuts
+        if length(cuts) >= max_nb_cuts && curr_tol >= min_tol_limit_cuts
             break
         end
     end
@@ -388,8 +391,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     # Build the MIP model
     model = Model(SDPSolver.Optimizer)
     if SDPSolverName == "SDPNAL"
-        # set_optimizer_attribute(model, "printlevel", 0)
-        # set_optimizer_attribute(model, "stopoption", 0)
+        set_optimizer_attribute(model, "printlevel", 0)
+        set_optimizer_attribute(model, "stopoption", 0)
     else
         set_optimizer_attribute(model, "verbose", false)
     end
@@ -540,7 +543,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             update_z_aux()
             nb_cuts = 0
             shuffle!(rng, perm)
-            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol, perm)
+            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol, perm, curr_tol)
             resize!(pivot_cuts, min(target_nb_cuts, length(pivot_cuts)))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
@@ -554,7 +557,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 end
             end
             shuffle!(rng, perm)
-            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol, perm)
+            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol, perm, curr_tol)
             resize!(triangle_cuts, min(target_nb_cuts, length(triangle_cuts)))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
@@ -600,7 +603,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 break
             end
             curr_tol = max(curr_tol * tol_step, target_tol)
-            min_viol = sqrt(curr_tol)
+	    min_viol = sqrt(curr_tol) * (K / n)
             tol_was_decreased = true
         else
             tol_was_decreased = false
