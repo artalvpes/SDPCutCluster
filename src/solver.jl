@@ -8,7 +8,8 @@ const target_tol = 1e-6
 const ph1_to_ph2_tol = 10
 const gap_tol = 1e-4
 const tol_step = 0.2
-const max_nb_cuts = 5000
+const max_nb_cuts = 100000
+const div_nb_cuts = 20
 const target_nb_cuts = 2000
 const max_safe_bound_iters = 10
 
@@ -45,7 +46,16 @@ function separate_triangle_cuts!(
                 if viol >= min_viol
                     push!(cuts, TriangleCut(i, j, l, viol))
                 end
+                if length(cuts) >= max_nb_cuts
+                    break
+                end
             end
+            if length(cuts) >= max_nb_cuts
+                break
+            end
+        end
+        if length(cuts) >= max_nb_cuts
+            break
         end
     end
     sort!(cuts, by = x -> x.viol, rev = true)
@@ -77,6 +87,12 @@ function separate_pivot_cuts!(
             if viol >= min_viol
                 push!(cuts, PivotCut(i, j, viol))
             end
+            if length(cuts) >= max_nb_cuts
+                break
+            end
+        end
+        if length(cuts) >= max_nb_cuts
+            break
         end
     end
     sort!(cuts, by = x -> x.viol, rev = true)
@@ -504,7 +520,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             update_z_aux()
             nb_cuts = 0
             separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
-            resize!(pivot_cuts, min(max_nb_cuts, length(pivot_cuts)))
+            resize!(pivot_cuts, min(div(max_nb_cuts, div_nb_cuts), length(pivot_cuts)))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
                     continue
@@ -517,7 +533,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 end
             end
             separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol)
-            resize!(triangle_cuts, min(max_nb_cuts, length(triangle_cuts)))
+            resize!(triangle_cuts, min(div(max_nb_cuts, div_nb_cuts), length(triangle_cuts)))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
                     continue
