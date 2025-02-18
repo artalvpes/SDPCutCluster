@@ -32,19 +32,24 @@ function separate_triangle_cuts!(
     resize!(cuts, 0)
     for i in perm
         z_ii = zs_(i, i)
-        for j in 1:n
+        for j in (i+1):n
             z_ij = zs_(i, j)
-            if j == i || z_ij < min_viol
-                continue
-            end
+            z_jj = zs_(j, j)
             for l in (j+1):n
                 z_il = zs_(i, l)
-                if l == i || z_il < min_viol
-                    continue
-                end
-                viol = z_ij + z_il - z_ii - zs_(j, l)
+                z_jl = zs_(j, l)
+                z_ll = zs_(l, l)
+                viol = z_ij + z_il - z_ii - z_jl
                 if viol >= min_viol
                     push!(cuts, TriangleCut(i, j, l, viol))
+                end
+                viol = z_ij + z_jl - z_jj - z_il
+                if viol >= min_viol
+                    push!(cuts, TriangleCut(j, i, l, viol))
+                end
+                viol = z_il + z_jl - z_ll - z_ij
+                if viol >= min_viol
+                    push!(cuts, TriangleCut(l, i, j, viol))
                 end
                 if length(cuts) >= max_nb_cuts
                     break
@@ -79,14 +84,16 @@ function separate_pivot_cuts!(
     resize!(cuts, 0)
     for i in perm
         z_ii = zs_(i, i)
-        for j in 1:n
+        for j in (i+1):n
             z_ij = zs_(i, j)
-            if j == i || z_ij < min_viol
-                continue
-            end
+            z_jj = zs_(j, j)
             viol = z_ij - z_ii
             if viol >= min_viol
                 push!(cuts, PivotCut(i, j, viol))
+            end
+            viol = z_ij - z_jj
+            if viol >= min_viol
+                push!(cuts, PivotCut(j, i, viol))
             end
             if length(cuts) >= max_nb_cuts
                 break
