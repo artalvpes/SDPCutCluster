@@ -3,13 +3,12 @@ struct Solution
     clusters::Vector{Vector{Int}}
 end
 
-const init_tol = 1e-3
+const init_tol = 1e-5
 const target_tol = 1e-6
 const ph1_to_ph2_tol = 10
 const gap_tol = 1e-4
-const tol_step = 0.25
+const tol_step = 0.1
 const max_nb_cuts = 100000
-const div_nb_cuts = 20
 const target_nb_cuts = 5000
 const max_safe_bound_iters = 10
 
@@ -185,7 +184,7 @@ function run_rounding_heuristic(
         i = pop!(unused)
         centroids[k] = data.points[i]
         sort!(unused, by = j -> z_[i, j])
-        s = min(length(unused) - K + k, ceil(Int, (n / K) * (1 / z_[i, i])))
+        s = min(length(unused) - K + k, ceil(Int, 1 / z_[i, i]))
         first = length(unused) + 2 - s
         for pos in first:length(unused)
             centroids[k] = centroids[k] .+ data.points[unused[pos]]
@@ -277,7 +276,7 @@ function compute_P!(
     P::Matrix{Float64},
 )
     for i in 1:n, j in 1:n
-        P[i, j] = -(K / n) * costs[i, j] - _sigma[i] - _alpha[i, j]
+        P[i, j] = -costs[i, j] - _sigma[i] - _alpha[i, j]
         if i == j
             P[i, j] -= _pi
         end
@@ -365,8 +364,8 @@ function compute_safe_bound(
     if lambda_min < 0.0
         _pi += lambda_min
     end
-    return data.fixed_cost + n * _pi + (n / K) * sum(_sigma) +
-           (n / (K * (n - K + 1))) * sum(_alpha[i, i] for i in 1:n)
+    return data.fixed_cost + K * _pi + sum(_sigma) +
+           (1 / (n - K + 1)) * sum(_alpha[i, i] for i in 1:n)
 end
 
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
@@ -380,22 +379,22 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     # Build the MIP model
     model = Model(SDPSolver.Optimizer)
     if SDPSolverName == "SDPNAL"
-        set_optimizer_attribute(model, "printlevel", 0)
-        set_optimizer_attribute(model, "stopoption", 0)
+        # set_optimizer_attribute(model, "printlevel", 0)
+        # set_optimizer_attribute(model, "stopoption", 0)
     else
         set_optimizer_attribute(model, "verbose", false)
     end
     @variables(model, begin
-        z[i = 1:n, j = 1:n] >= ((i == j) ? (n / (K * (n - K + 1))) : 0.0), PSD
+        z[i = 1:n, j = 1:n] >= ((i == j) ? (1 / (n - K + 1)) : 0.0), PSD
     end)
     @objective(
         model,
         Min,
-        -(K / n) * sum(data.costs[i, j] * z[i, j] for i in 1:n, j in 1:n)
+        -sum(data.costs[i, j] * z[i, j] for i in 1:n, j in 1:n)
     )
     @constraints(model, begin
-        c_pi, sum(z[i, i] for i in 1:n) == n
-        c_sigma[i = 1:n], sum(z[i, j] for j in 1:n) == (n / K)
+        c_pi, sum(z[i, i] for i in 1:n) == K
+        c_sigma[i = 1:n], sum(z[i, j] for j in 1:n) == 1
     end)
 
     # loop adding triangle cuts
@@ -425,7 +424,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     cut_round = 0
     obj = 0.0
     curr_tol = init_tol
-    min_viol = sqrt(curr_tol)
+    min_viol = sqrt(curr_tol) * (K / n)
     tol_was_decreased = false
     best_bound = 0.0
     while true
@@ -520,7 +519,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             update_z_aux()
             nb_cuts = 0
             separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
-            resize!(pivot_cuts, div(length(pivot_cuts) + div_nb_cuts - 1, div_nb_cuts))
+            resize!(pivot_cuts, min(target_nb_cuts, length(pivot_cuts)))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
                     continue
@@ -533,7 +532,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 end
             end
             separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol)
-            resize!(triangle_cuts, div(length(triangle_cuts) + div_nb_cuts - 1, div_nb_cuts))
+            resize!(triangle_cuts, min(target_nb_cuts, length(triangle_cuts)))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
                     continue
