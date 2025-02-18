@@ -520,7 +520,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             update_z_aux()
             nb_cuts = 0
             separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
-            resize!(pivot_cuts, min(div(max_nb_cuts, div_nb_cuts), length(pivot_cuts)))
+            resize!(pivot_cuts, div(length(pivot_cuts) + div_nb_cuts - 1, div_nb_cuts))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
                     continue
@@ -533,7 +533,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                 end
             end
             separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol)
-            resize!(triangle_cuts, min(div(max_nb_cuts, div_nb_cuts), length(triangle_cuts)))
+            resize!(triangle_cuts, div(length(triangle_cuts) + div_nb_cuts - 1, div_nb_cuts))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
                     continue
