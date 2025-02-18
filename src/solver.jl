@@ -30,7 +30,7 @@ function separate_triangle_cuts!(
 )::Vector{TriangleCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
-    for i in 1:n
+    for i in perm
         z_ii = zs_(i, i)
         for j in 1:n
             z_ij = zs_(i, j)
@@ -77,7 +77,7 @@ function separate_pivot_cuts!(
 )::Vector{PivotCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
-    for i in 1:n
+    for i in perm
         z_ii = zs_(i, i)
         for j in 1:n
             z_ij = zs_(i, j)
