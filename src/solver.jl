@@ -26,6 +26,7 @@ function separate_triangle_cuts!(
     z_::Matrix{Float64},
     cuts::Vector{TriangleCut},
     min_viol::Float64,
+    perm::Vector{Int},
 )::Vector{TriangleCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
@@ -72,6 +73,7 @@ function separate_pivot_cuts!(
     z_::Matrix{Float64},
     cuts::Vector{PivotCut},
     min_viol::Float64,
+    perm::Vector{Int},
 )::Vector{PivotCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
@@ -427,6 +429,7 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     min_viol = sqrt(curr_tol) * (K / n)
     tol_was_decreased = false
     best_bound = 0.0
+    perm = collect(1:n)
     while true
         # solve the SDP relaxation
         if SDPSolverName == "SDPNAL"
@@ -454,15 +457,15 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         for c in 1:remain_cuts
             # should_keep[c] = get_attribute(added_cuts[c], MOI.ConstraintBasisStatus()) == MOI.BASIC
             # should_keep[c] = abs(value(added_cuts[c])) < min_viol
-            # should_keep[c] = abs(dual(added_cuts[c])) > 1e-6 * new_obj
+            should_keep[c] = abs(dual(added_cuts[c])) > 1e-6 * new_obj
             # should_keep[c] = true
-            i, j, l = cut_indices[c]
-            if l == 0
-                viol = z_[i, j] - z_[i, i]
-            else
-                viol = z_[i, j] + z_[i, l] - z_[i, i] - z_[j, l]
-            end
-            should_keep[c] = viol > -min_viol
+            # i, j, l = cut_indices[c]
+            # if l == 0
+            #     viol = z_[i, j] - z_[i, i]
+            # else
+            #     viol = z_[i, j] + z_[i, l] - z_[i, i] - z_[j, l]
+            # end
+            # should_keep[c] = viol > -min_viol
         end
         target_obj = run_rounding_heuristic(
             rng,
@@ -525,7 +528,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         while first || reduced_alpha
             update_z_aux()
             nb_cuts = 0
-            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol)
+            shuffle!(rng, perm)
+            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol, perm)
             resize!(pivot_cuts, min(target_nb_cuts, length(pivot_cuts)))
             for cut in pivot_cuts
                 if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
@@ -538,7 +542,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
                     break
                 end
             end
-            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol)
+            shuffle!(rng, perm)
+            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol, perm)
             resize!(triangle_cuts, min(target_nb_cuts, length(triangle_cuts)))
             for cut in triangle_cuts
                 if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
