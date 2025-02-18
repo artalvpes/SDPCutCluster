@@ -7,10 +7,10 @@ const init_tol = 1e-3
 const target_tol = 1e-6
 const ph1_to_ph2_tol = 10
 const gap_tol = 1e-4
-const tol_step = 0.2
+const tol_step = 0.25
 const max_nb_cuts = 100000
 const div_nb_cuts = 20
-const target_nb_cuts = 2000
+const target_nb_cuts = 5000
 const max_safe_bound_iters = 10
 
 tol_is_ok(tol::Float64)::Bool = abs(tol - target_tol) < 1e-6 * target_tol
@@ -570,10 +570,10 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
         resize!(should_keep, length(added_cuts))
 
-        diff = round(new_obj - obj, digits = 5)
-        obj = new_obj
+        diff = round(safe_bound - obj, digits = 5)
+        obj = safe_bound
         @show cut_round, target_obj, safe_bound, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time, gap
-        if nb_cuts == 0 || (new_obj > target_obj) || (diff < 1e-6 * new_obj && !tol_was_decreased)
+        if nb_cuts == 0 || (new_obj > target_obj) || (diff < 1e-6 * safe_bound && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
             end
