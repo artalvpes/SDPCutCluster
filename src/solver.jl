@@ -446,6 +446,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             set_optimizer_attribute(model, "eps_rel", curr_tol)
         end
         sdp_time = @elapsed optimize!(model)
+
+        # get the solution and check its feasibility
         new_obj = data.fixed_cost + objective_value(model)
         nb_infeas = 0
         max_infeas = 0.0
@@ -460,20 +462,8 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         if nb_infeas == 0
             break
         end
-        remain_cuts = length(added_cuts)
-        for c in 1:remain_cuts
-            # should_keep[c] = get_attribute(added_cuts[c], MOI.ConstraintBasisStatus()) == MOI.BASIC
-            # should_keep[c] = abs(value(added_cuts[c])) < min_viol
-            should_keep[c] = abs(dual(added_cuts[c])) > 1e-6 * new_obj
-            # should_keep[c] = true
-            # i, j, l = cut_indices[c]
-            # if l == 0
-            #     viol = z_[i, j] - z_[i, i]
-            # else
-            #     viol = z_[i, j] + z_[i, l] - z_[i, i] - z_[j, l]
-            # end
-            # should_keep[c] = viol > -min_viol
-        end
+
+        # run the rounding heuristic to try to improve the current solution
         target_obj = run_rounding_heuristic(
             rng,
             data,
@@ -510,7 +500,21 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             break
         end
 
-        # remove cuts that are not needed
+        # remove the cuts that are not needed
+        remain_cuts = length(added_cuts)
+        for c in 1:remain_cuts
+            # should_keep[c] = get_attribute(added_cuts[c], MOI.ConstraintBasisStatus()) == MOI.BASIC
+            # should_keep[c] = abs(value(added_cuts[c])) < min_viol
+            should_keep[c] = abs(cut_duals[c]) > 1e-6 * new_obj
+            # should_keep[c] = true
+            # i, j, l = cut_indices[c]
+            # if l == 0
+            #     viol = z_[i, j] - z_[i, i]
+            # else
+            #     viol = z_[i, j] + z_[i, l] - z_[i, i] - z_[j, l]
+            # end
+            # should_keep[c] = viol > -min_viol
+        end
         c = 1
         while c <= remain_cuts
             if !should_keep[c]
