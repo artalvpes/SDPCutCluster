@@ -12,6 +12,8 @@ const max_nb_cuts = 1000000
 const min_tol_limit_cuts = 1e-4
 const target_nb_cuts = 5000
 const max_safe_bound_iters = 10
+const nb_iter_k_means = 5
+const time_limit_secs = 3600
 
 tol_is_ok(tol::Float64)::Bool = abs(tol - target_tol) < 1e-6 * target_tol
 
@@ -81,7 +83,7 @@ function separate_pivot_cuts!(
     cuts::Vector{PivotCut},
     min_viol::Float64,
     perm::Vector{Int},
-    curr_tol::Float64
+    curr_tol::Float64,
 )::Vector{PivotCut}
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
     resize!(cuts, 0)
@@ -338,6 +340,7 @@ function compute_safe_bound(
     K::Int,
     P::Matrix{Float64},
     cut_grad::Vector{Float64},
+    gain::Vector{Float64},
 )::Float64 where {Dim}
     n = length(data.points)
     # write("fixed_cost.bin", data.fixed_cost)
@@ -354,6 +357,7 @@ function compute_safe_bound(
     compute_P!(n, K, data.costs, _pi, _sigma, _alpha, cut_duals, cut_indices, P)
     dec = eigen(P)
     lambda_min = dec.values[1]
+    gain[1] = -lambda_min
     for _ in 1:max_safe_bound_iters
         eigvec = dec.vectors[:, 1]
         compute_eigen_gradient!(cut_indices, eigvec, cut_grad)
@@ -376,11 +380,13 @@ function compute_safe_bound(
     if lambda_min < 0.0
         _pi += lambda_min
     end
+    gain[1] += lambda_min
     return data.fixed_cost + K * _pi + sum(_sigma) +
            (1 / (n - K + 1)) * sum(_alpha[i, i] for i in 1:n)
 end
 
 function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
+    start_time = time_ns()
     println("Solving $(length(data.points)) points in $(Dim) dimensions")
     mat"maxNumCompThreads(1)"
     rng = MersenneTwister(12345678)
@@ -442,7 +448,9 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     perm = collect(1:n)
     while true
         # solve the SDP relaxation
+        currtime = round((time_ns() - start_time) / 1e9, digits = 2)
         if SDPSolverName == "SDPNAL"
+            set_optimizer_attribute(model, "maxtime", time_limit_secs - currtime + 1)
             set_optimizer_attribute(model, "ADMtol", curr_tol / ph1_to_ph2_tol)
             set_optimizer_attribute(model, "tol", curr_tol)
         else
@@ -467,17 +475,19 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         end
 
         # run the rounding heuristic to try to improve the current solution
-        target_obj = run_rounding_heuristic(
-            rng,
-            data,
-            z_,
-            z_target,
-            target_obj,
-            buffers.centroids,
-            buffers.points_to_cluster,
-            buffers.cluster_sizes,
-            buffers.unused,
-        )
+        for _ in 1:nb_iter_k_means
+            target_obj = run_rounding_heuristic(
+                rng,
+                data,
+                z_,
+                z_target,
+                target_obj,
+                buffers.centroids,
+                buffers.points_to_cluster,
+                buffers.cluster_sizes,
+                buffers.unused,
+            )
+        end
 
         # compute a safe bound and the gap
         _pi = dual(c_pi)
@@ -495,11 +505,14 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
             end
         end
         resize!(cut_grad, length(added_cuts))
-        safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P, cut_grad)
+        gain = [0.0]
+        safe_bound = compute_safe_bound(data, _pi, _sigma, cut_duals, cut_indices, _alpha, K, P, cut_grad, gain)
         best_bound = max(best_bound, safe_bound)
         gap = (target_obj - best_bound) / target_obj
         if gap <= gap_tol
-            @show cut_round, target_obj, best_bound, curr_tol, sdp_time, gap
+            gap_perc = round(100 * gap, digits = 3)
+            currtime = round((time_ns() - start_time) / 1e9, digits = 2)
+            @show cut_round, target_obj, best_bound, gain[1], curr_tol, currtime, gap_perc
             break
         end
 
@@ -597,16 +610,29 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
 
         diff = round(safe_bound - obj, digits = 5)
         obj = safe_bound
-        @show cut_round, target_obj, safe_bound, diff, nb_cuts, remain_cuts, alpha, curr_tol, sdp_time, gap
+        gap_perc = round(100 * gap, digits = 3)
+        currtime = round((time_ns() - start_time) / 1e9, digits = 2)
+        @show (cut_round,
+            target_obj,
+            safe_bound,
+            gain[1],
+            nb_cuts,
+            remain_cuts,
+            curr_tol,
+            currtime,
+            gap_perc)
         if nb_cuts == 0 || (new_obj > target_obj) || (diff < 1e-6 * safe_bound && !tol_was_decreased)
             if tol_is_ok(curr_tol)
                 break
             end
             curr_tol = max(curr_tol * tol_step, target_tol)
-	    min_viol = sqrt(curr_tol) * (K / n)
+            min_viol = sqrt(curr_tol) * (K / n)
             tol_was_decreased = true
         else
             tol_was_decreased = false
+        end
+        if currtime >= time_limit_secs
+            break
         end
     end
 
