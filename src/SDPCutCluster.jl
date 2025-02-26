@@ -2,12 +2,12 @@ module SDPCutCluster
 
 using JuMP, CPLEX, MathOptInterface, LinearAlgebra, MATLAB, Random
 
-# using SCS
-# const SDPSolver = SCS
-# const SDPSolverName = "SCS"
-using SDPNAL
-const SDPSolver = SDPNAL
-const SDPSolverName = "SDPNAL"
+using SCS
+const SDPSolver = SCS
+const SDPSolverName = "SCS"
+# using SDPNAL
+# const SDPSolver = SDPNAL
+# const SDPSolverName = "SDPNAL"
 
 
 include("data.jl")
