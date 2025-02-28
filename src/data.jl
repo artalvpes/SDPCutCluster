@@ -15,7 +15,7 @@ function read_data(filename::String)::Data
             if dim == 0
                 head = parse.(Int, split(line))
                 nb_points, dim = head[1], head[2]
-            else
+            elseif length(coords) < nb_points
                 push!(coords, map(x -> parse(Float64, x), split(line)))
             end
         end
