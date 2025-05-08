@@ -419,18 +419,10 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
     target_obj = Inf
     z_target = zeros(Float64, n, n)
     buffers = HeuristicBuffers{Dim}(n, K)
-    alpha = 0.0 # 0.9
     z_ = zeros(Float64, n, n)
-    z_aux = zeros(Float64, n, n)
     pivot_cuts = Vector{PivotCut}()
     triangle_cuts = Vector{TriangleCut}()
     zs_(i::Int, j::Int) = (j < i) ? z_[j, i] : z_[i, j]
-    function update_z_aux()
-        for i in 1:n, j in 1:n
-            z_aux[i, j] = alpha * z_target[i, j] + (1 - alpha) * z_[i, j]
-        end
-        return nothing
-    end
     added_cuts = Vector{ConstraintRef}()
     should_keep = Vector{Bool}()
     cut_indices = Vector{Tuple{Int, Int, Int}}()
@@ -549,62 +541,36 @@ function solve(data::Data{Dim}, K::Int)::Solution where {Dim}
         # add new cuts
         cut_round += 1
         nb_cuts = 0
-        first = true
-        reduced_alpha = false
-        last_cut = length(added_cuts)
-        while first || reduced_alpha
-            update_z_aux()
-            nb_cuts = 0
-            shuffle!(rng, perm)
-            separate_pivot_cuts!(n, z_aux, pivot_cuts, min_viol, perm, curr_tol)
-            resize!(pivot_cuts, min(target_nb_cuts, length(pivot_cuts)))
-            for cut in pivot_cuts
-                if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
-                    continue
-                end
-                nb_cuts += 1
-                push!(added_cuts, @constraint(model, z[cut.i, cut.i] >= z[cut.i, cut.j]))
-                push!(cut_indices, (cut.i, cut.j, 0))
-                if nb_cuts >= target_nb_cuts
-                    break
-                end
+        shuffle!(rng, perm)
+        separate_pivot_cuts!(n, z_, pivot_cuts, min_viol, perm, curr_tol)
+        resize!(pivot_cuts, min(target_nb_cuts, length(pivot_cuts)))
+        for cut in pivot_cuts
+            if zs_(cut.i, cut.i) >= zs_(cut.i, cut.j) - min_viol
+                continue
             end
-            shuffle!(rng, perm)
-            separate_triangle_cuts!(n, z_aux, triangle_cuts, min_viol, perm, curr_tol)
-            resize!(triangle_cuts, min(target_nb_cuts, length(triangle_cuts)))
-            for cut in triangle_cuts
-                if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
-                    continue
-                end
-                nb_cuts += 1
-                push!(
-                    added_cuts,
-                    @constraint(model, z[cut.j, cut.l] >= z[cut.i, cut.j] + z[cut.i, cut.l] - z[cut.i, cut.i])
-                )
-                push!(cut_indices, (cut.i, cut.j, cut.l))
-                if nb_cuts >= 2 * target_nb_cuts
-                    break
-                end
+            nb_cuts += 1
+            push!(added_cuts, @constraint(model, z[cut.i, cut.i] >= z[cut.i, cut.j]))
+            push!(cut_indices, (cut.i, cut.j, 0))
+            if nb_cuts >= target_nb_cuts
+                break
             end
-            reduced_alpha = false
-            if alpha != 0.0
-                if nb_cuts < target_nb_cuts
-                    alpha -= (1 - alpha) / 3
-                    reduced_alpha = true
-                    for c in (last_cut+1):length(added_cuts)
-                        JuMP.delete(model, added_cuts[c])
-                    end
-                    resize!(added_cuts, last_cut)
-                    resize!(cut_indices, last_cut)
-                end
-                if nb_cuts >= 2 * target_nb_cuts
-                    alpha += (1 - alpha) / 5
-                end
-                if alpha < 0.1
-                    alpha = 0.0
-                end
+        end
+        shuffle!(rng, perm)
+        separate_triangle_cuts!(n, z_, triangle_cuts, min_viol, perm, curr_tol)
+        resize!(triangle_cuts, min(target_nb_cuts, length(triangle_cuts)))
+        for cut in triangle_cuts
+            if zs_(cut.j, cut.l) >= zs_(cut.i, cut.j) + zs_(cut.i, cut.l) - zs_(cut.i, cut.i) - min_viol
+                continue
             end
-            first = false
+            nb_cuts += 1
+            push!(
+                added_cuts,
+                @constraint(model, z[cut.j, cut.l] >= z[cut.i, cut.j] + z[cut.i, cut.l] - z[cut.i, cut.i])
+            )
+            push!(cut_indices, (cut.i, cut.j, cut.l))
+            if nb_cuts >= 2 * target_nb_cuts
+                break
+            end
         end
         resize!(should_keep, length(added_cuts))
 
